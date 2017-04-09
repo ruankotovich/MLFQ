@@ -5,13 +5,15 @@
  */
 package mlfq;
 
-import com.sun.tracing.ProbeName;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.PriorityQueue;
 import java.util.Random;
+import java.util.Scanner;
+import java.util.Set;
 
 /**
  *
@@ -27,6 +29,9 @@ class Process {
     private final int pid;
     private final Random rand;
     private final int startTime;
+    private int executionTime;
+    private int waitTime;
+    private int spentTime;
     private int timeToLive;
     private int currentStartTime;
     private final int processTime;
@@ -40,6 +45,7 @@ class Process {
         this.lifeTime = 0;
         this.timeToLive = 0;
         this.pid = pid;
+        this.spentTime = 0;
         this.ioProbability = ioProbability;
         rand = new Random();
     }
@@ -50,18 +56,20 @@ class Process {
         this.timeToLive = currentQuantum;
     }
 
-    public char step() {
+    public char step(ProcessPool pool) {
         int ioOper;
         MLFQ.printLog("\t[EVENT] Running process " + getPid() + " on queue " + getCurrentQueue() + "[ ttl : " + this.timeToLive + " , lifetime : " + this.lifeTime + ", processT : " + this.processTime + "]");
         this.lifeTime++;
         this.timeToLive--;
+        this.increaseSpentTime(1);
         MLFQ.printLog(", now [ ttl : " + this.timeToLive + " , lifetime : " + this.lifeTime + ", processT : " + this.processTime + "]");
         if (this.lifeTime < this.processTime) {
 
             if (this.timeToLive > 0) {
-                ioOper = rand.nextInt(101);
+                ioOper = 1 + rand.nextInt(101);
 
-                if (this.ioProbability > ioOper) {
+                if (this.ioProbability >= ioOper) {
+                    this.currentStartTime = (int) (pool.getTimestamp() + (1 + rand.nextInt(6)));
                     return Process.PROCESS_BLOCKED;
                 } else {
                     return Process.PROCESS_UNFINISHED;
@@ -74,6 +82,10 @@ class Process {
         } else {
             return Process.PROCESS_FINISHED;
         }
+    }
+
+    public void increaseSpentTime(int val) {
+        this.spentTime += val;
     }
 
     public void changeCurrentQueue(int queue) {
@@ -110,6 +122,30 @@ class Process {
 
     public int getCurrentQueue() {
         return currentQueue;
+    }
+
+    public int getExecutionTime() {
+        return executionTime;
+    }
+
+    public void setExecutionTime(int executionTime) {
+        this.executionTime = executionTime;
+    }
+
+    public int getWaitTime() {
+        return waitTime;
+    }
+
+    public void setWaitTime(int waitTime) {
+        this.waitTime = waitTime;
+    }
+
+    public int getSpentTime() {
+        return spentTime;
+    }
+
+    public void setSpentTime(int spentTime) {
+        this.spentTime = spentTime;
     }
 
 }
@@ -149,7 +185,8 @@ class ProcessQueue {
         boolean sliced = false;
         char step;
 
-        step = executing.step();
+        step = executing.step(caller);
+        caller.getProcessOrder().append("P").append(executing.getPid()).append(" ");
         MLFQ.printStepType(step);
         this.caller.increaseTimestamp();
         this.caller.decreaseSliceTime();
@@ -157,7 +194,7 @@ class ProcessQueue {
         if (this.caller.getCurrentSlice() <= 0) {
             sliced = true;
             MLFQ.printLog("\n[THREAD] Current time : " + caller.getTimestamp() + " / Current Slice Time : " + caller.getCurrentSlice() + "\n");
-            MLFQ.printLog("\t[EVENT] A Slice occurs");
+            MLFQ.printLog("\t[EVENT] A Refresh occurs");
             this.caller.resetSliceTime();
         }
 
@@ -170,11 +207,13 @@ class ProcessQueue {
          */
         if (step == Process.PROCESS_FINISHED) {
             executing = executionQueue.pollFirst();
+            executing.setExecutionTime((int) (caller.getTimestamp() - executing.getStartTime()));
+            executing.setWaitTime(executing.getExecutionTime() - executing.getSpentTime());
             caller.getFinishedProcesses().put(executing.getPid(), executing);
         } else if (step == Process.PROCESS_BLOCKED) {
             executing = executionQueue.pollFirst();
             executing.changeTTL(caller.getProcessQueues()[executing.getCurrentQueue()].getQuantum());
-            caller.getWaitQueue().add(executing);
+            caller.insertProcess(executing);
         }
 
         if (sliced) {
@@ -183,7 +222,7 @@ class ProcessQueue {
                 MLFQ.printLog(", executing process til the end.\n");
                 //execute to the end if unfinished
                 if (step < Process.PROCESS_FINISHED) {
-                    while ((step = executing.step()) < Process.PROCESS_FINISHED) {
+                    while ((step = executing.step(caller)) < Process.PROCESS_FINISHED) {
                         caller.increaseTimestamp();
                         caller.decreaseSliceTime();
                         MLFQ.printStepType(step);
@@ -249,6 +288,7 @@ class ProcessPool {
 
     private final PriorityQueue<Process> waitQueue;
     private final Map<Integer, Process> finishedProcesses;
+    private final StringBuffer processOrder;
     private final ProcessQueue processQueues[];
     private long timestamp;
     private final int queuesAmount;
@@ -269,6 +309,7 @@ class ProcessPool {
 
         this.processQueues = new ProcessQueue[queues];
         this.finishedProcesses = new HashMap<>();
+        this.processOrder = new StringBuffer();
         int queueQuantum[] = new int[queues];
 
         for (int i = 0; i < queues; i++) {
@@ -345,6 +386,11 @@ class ProcessPool {
         waitQueue.add(new Process(pid, startTime, processTime, ioProbability, 0, processQueues[0].getQuantum()));
     }
 
+    public void insertProcess(Process p) {
+        MLFQ.printLog("\t[EVENT] Inserting process " + p.getPid() + " on wait queue [ pid : " + p.getPid() + ", startTime : " + p.getCurrentStartTime() + ", processT : " + p.getProcessTime() + ", ioProb : " + p.getIoProbability() + "]\n");
+        waitQueue.add(p);
+    }
+
     public void runMLFQ() {
         boolean currentExecuted, someoneExecuted, empty;
 
@@ -415,38 +461,70 @@ class ProcessPool {
         return currentSlice;
     }
 
+    public StringBuffer getProcessOrder() {
+        return processOrder;
+    }
+
 }
 
 public class MLFQ {
 
     @Deprecated
     public static void printLog(String toLog) {
-        System.err.print(toLog);
+        System.out.print(toLog);
     }
 
     @Deprecated
     public static void printStepType(char step) {
         switch (step) {
             case 0:
-                System.err.print(" - UNFINISHED\n");
+                System.out.print(" - UNFINISHED\n");
                 break;
             case 1:
-                System.err.print(" - FINISHED\n");
+                System.out.print(" - FINISHED\n");
                 break;
             case 2:
-                System.err.print(" - QUANTUM ENDED\n");
+                System.out.print(" - QUANTUM ENDED\n");
                 break;
             case 3:
-                System.err.print(" - BLOCKED\n");
+                System.out.print(" - BLOCKED\n");
                 break;
         }
     }
 
     public static void main(String[] args) {
-        ProcessPool processPool = new ProcessPool(3, new int[]{2, 4, 8}, 10);
-        processPool.insertProcess(0, 0, 2, 0);
-        processPool.insertProcess(1, 0, 50, 0);
-        processPool.insertProcess(2, 10, 2, 0);
-        processPool.runMLFQ();
+        Scanner scanner = new Scanner(System.in);
+        int processCount;
+        int time, execution, iobound;
+
+        processCount = scanner.nextInt();
+
+        while (processCount > 0) {
+
+            ProcessPool processPool = new ProcessPool(1, new int[]{2}, 200);
+
+            for (int i = 1; i <= processCount; i++) {
+                time = scanner.nextInt();
+                execution = scanner.nextInt();
+                iobound = scanner.nextInt();
+                processPool.insertProcess(i, time, execution, iobound);
+            }
+
+            processPool.runMLFQ();
+            double waitSum = 0, executionSum = 0;
+
+            MLFQ.printLog("\n\n -- ALL PROCESS HAVE BEEN EXECUTED -- \n\n");
+
+            Set<Entry<Integer, Process>> keys = processPool.getFinishedProcesses().entrySet();
+
+            for (Entry<Integer, Process> key : keys) {
+                waitSum += key.getValue().getWaitTime();
+                executionSum += key.getValue().getExecutionTime();
+            }
+            System.out.println("Tempo médio de execução: " + executionSum / processPool.getFinishedProcesses().size());
+            System.out.println("Tempo médio de espera: " + waitSum / processPool.getFinishedProcesses().size());
+            System.out.println(processPool.getProcessOrder());
+            processCount = scanner.nextInt();
+        }
     }
 }
