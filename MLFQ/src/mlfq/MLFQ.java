@@ -5,7 +5,6 @@
  */
 package mlfq;
 
-import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.LinkedList;
 import java.util.PriorityQueue;
@@ -25,12 +24,32 @@ public class MLFQ {
         private int currentStartTime;
         private final int processTime;
         private final int ioProbability;
+        private int currentQueue;
 
         public Process(int pid, int startTime, int processTime, int ioProbability) {
             this.currentStartTime = this.startTime = startTime;
             this.timeToLive = this.processTime = processTime;
             this.pid = pid;
             this.ioProbability = ioProbability;
+        }
+
+        public Process(int pid, int startTime, int processTime, int ioProbability, int currentQueue) {
+            this(pid, startTime, processTime, ioProbability);
+            this.currentQueue = currentQueue;
+        }
+
+        public char step() {
+            /*
+                0 - unfinished;
+                1 - finished;
+                2 - quantum over;
+                3 - IO event
+             */
+            return 0;
+        }
+
+        public void changeCurrentQueue(int queue) {
+            this.currentQueue = queue;
         }
 
         public int getPid() {
@@ -57,9 +76,13 @@ public class MLFQ {
             return ioProbability;
         }
 
+        public int getCurrentQueue() {
+            return currentQueue;
+        }
+
     }
 
-    public class ProcessQueue {
+    private class ProcessQueue {
 
         private final int quantum;
         private final Deque<Process> executionQueue;
@@ -75,16 +98,49 @@ public class MLFQ {
 
         /**
          * Put the process one queue bellow;
+         *
+         * @param p - process that will be demoted
          */
         public void demoteProcess(Process p) {
-
+            ProcessQueue queue = caller.getProcessQueues()[priority < (caller.getQueuesAmount() - 1) ? priority + 1 : priority];
+            p.changeCurrentQueue(queue.getPriority());
+            queue.executionQueue.add(p);
         }
 
         public int getQuantum() {
             return quantum;
         }
 
+        /**
+         * It's assumed that the queue will only step if it can step
+         */
         public void step() {
+            Process executing = executionQueue.pollFirst();
+            boolean sliced = false;
+            char step = 0;
+
+            while ((step = executing.step()) == 0) {
+                this.caller.timestamp++;
+                this.caller.currentSlice--;
+
+                if (this.caller.currentSlice == 0) {
+                    sliced = true;
+                    this.caller.currentSlice = this.caller.sliceTime;
+                }
+            }
+
+            if (sliced) {
+                this.caller.resetProcessesPriority();
+                caller.getProcessQueues()[0].getExecutionQueue().addLast(executing);
+            } else {
+                // if it's a quantum over event
+                if (step == 2) {
+                    demoteProcess(executing);
+                    // if it's a io event
+                } else if (step == 3) {
+                    caller.getWaitQueue().add(executing);
+                }
+            }
         }
 
         public boolean canStep() {
@@ -95,40 +151,26 @@ public class MLFQ {
             return executionQueue;
         }
 
-    }
-
-    public class WaitingShell {
-
-        private final Process process;
-        private int queue;
-
-        public WaitingShell(Process process, int queue) {
-            this.process = process;
-            this.queue = queue;
+        public int getPriority() {
+            return priority;
         }
 
-        public void resetQueue() {
-            this.queue = 0;
-        }
-
-        public Process getProcess() {
-            return process;
-        }
-
-        public int getQueue() {
-            return queue;
+        public ProcessPool getCaller() {
+            return caller;
         }
 
     }
 
     public class ProcessPool {
 
-        private final PriorityQueue<WaitingShell> waitQueue;
-        private final ProcessQueue processQueue[];
+        private final PriorityQueue<Process> waitQueue;
+        private final ProcessQueue processQueues[];
         private long timestamp;
         private final int queuesAmount;
+        private final int sliceTime;
+        private int currentSlice;
 
-        public ProcessPool(int queues, int[] quantumList) {
+        public ProcessPool(int queues, int[] quantumList, int sliceTime) {
 
             if (quantumList.length < queues) {
                 throw new Error("There ain't quantum numbers enought on list");
@@ -140,24 +182,31 @@ public class MLFQ {
 
             Random random = new Random();
 
-            this.processQueue = new ProcessQueue[queues];
+            this.processQueues = new ProcessQueue[queues];
             int queueQuantum[] = new int[queues];
 
             for (int i = 0; i < queues; i++) {
-                this.processQueue[i] = new ProcessQueue(this, quantumList[i], i);
+                this.processQueues[i] = new ProcessQueue(this, quantumList[i], i);
             }
 
-            this.waitQueue = new PriorityQueue<>((WaitingShell o1, WaitingShell o2) -> o1.getProcess().currentStartTime - o2.getProcess().currentStartTime);
+            this.waitQueue = new PriorityQueue<>((Process o1, Process o2) -> o1.currentStartTime - o2.currentStartTime);
             this.timestamp = 0;
             this.queuesAmount = queues;
+            this.currentSlice = this.sliceTime = sliceTime;
         }
 
         /**
          * Reset the priority of the waiting queue processes
          */
         public void resetProcessesPriority() {
-            for (WaitingShell shell : waitQueue) {
-                shell.resetQueue();
+            for (ProcessQueue queue : processQueues) {
+                for (Process p : queue.getExecutionQueue()) {
+                    p.changeCurrentQueue(0);
+                }
+            }
+
+            for (Process shell : waitQueue) {
+                shell.changeCurrentQueue(0);
             }
         }
 
@@ -167,11 +216,11 @@ public class MLFQ {
          *
          */
         public void recoverWaiting() {
-            WaitingShell current;
+            Process current;
             while (!waitQueue.isEmpty()) {
                 current = waitQueue.peek();
-                if (current.getProcess().getCurrentStartTime() <= this.timestamp) {
-                    processQueue[current.getQueue()].getExecutionQueue().addLast(current.getProcess());
+                if (current.getCurrentStartTime() <= this.timestamp) {
+                    processQueues[current.getCurrentQueue()].getExecutionQueue().addLast(current);
                     waitQueue.remove();
                 } else {
                     return;
@@ -180,18 +229,28 @@ public class MLFQ {
         }
 
         public void insertProcess(int pid, int startTime, int processTime, int ioProbability) {
-            waitQueue.add(new WaitingShell(new Process(pid, startTime, processTime, ioProbability), 0));
+            waitQueue.add(new Process(pid, startTime, processTime, ioProbability, 0));
         }
 
         public void runMLFQ() {
 
+            while (!waitQueue.isEmpty()) {
+
+                recoverWaiting();
+
+                for (ProcessQueue currentQueue : processQueues) {
+                    while (currentQueue.canStep()) {
+
+                        currentQueue.step();
+
+                    }
+                }
+
+            }
+
         }
 
-        public ProcessQueue[] getProcessQueue() {
-            return processQueue;
-        }
-
-        public PriorityQueue<WaitingShell> getWaitQueue() {
+        public PriorityQueue<Process> getWaitQueue() {
             return waitQueue;
         }
 
@@ -201,6 +260,18 @@ public class MLFQ {
 
         public int getQueuesAmount() {
             return queuesAmount;
+        }
+
+        public ProcessQueue[] getProcessQueues() {
+            return processQueues;
+        }
+
+        public int getSliceTime() {
+            return sliceTime;
+        }
+
+        public int getCurrentSlice() {
+            return currentSlice;
         }
 
     }
