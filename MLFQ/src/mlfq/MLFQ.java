@@ -68,7 +68,7 @@ class Process {
             if (this.timeToLive > 0) {
                 ioOper = 1 + rand.nextInt(101);
 
-                if (this.ioProbability >= ioOper) {
+                if (this.ioProbability < ioOper) {
                     this.currentStartTime = (int) (pool.getTimestamp() + (1 + rand.nextInt(6)));
                     return Process.PROCESS_BLOCKED;
                 } else {
@@ -496,12 +496,25 @@ public class MLFQ {
         Scanner scanner = new Scanner(System.in);
         int processCount;
         int time, execution, iobound;
-
         processCount = scanner.nextInt();
 
         while (processCount > 0) {
+            ProcessPool processPool;
+            if (args.length != 4) {
+                processPool = new ProcessPool(4, new int[]{2, 3, 4, 5}, 10);
+            } else {
+                int queues = Integer.parseInt(args[0]);
+                int minimal = Integer.parseInt(args[1]);
+                int increment = Integer.parseInt(args[2]);
+                int refresh = Integer.parseInt(args[3]);
 
-            ProcessPool processPool = new ProcessPool(1, new int[]{2}, 200);
+                int quantums[] = new int[queues];
+                for (int i = 0; i < quantums.length; i++) {
+                    quantums[i] = minimal + increment * i;
+                }
+
+                processPool = new ProcessPool(queues, quantums, refresh);
+            }
 
             for (int i = 1; i <= processCount; i++) {
                 time = scanner.nextInt();
