@@ -7,7 +7,9 @@ package mlfq;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.LinkedList;
 import java.util.PriorityQueue;
+import java.util.Random;
 
 /**
  *
@@ -15,186 +17,191 @@ import java.util.PriorityQueue;
  */
 public class MLFQ {
 
-    public static class Process {
+    public class Process {
 
-        private int startTime;
-        private int endTime;
-        private int processTime;
+        private final int pid;
+        private final int startTime;
         private int timeToLive;
-        private int spentTime;
-        private int executionTime;
-        private int waitTime;
-        private int pid;
-        private boolean done;
+        private int currentStartTime;
+        private final int processTime;
+        private final int ioProbability;
 
-        public Process(int pid, int startTime, int processTime) {
-            this.startTime = startTime;
+        public Process(int pid, int startTime, int processTime, int ioProbability) {
+            this.currentStartTime = this.startTime = startTime;
             this.timeToLive = this.processTime = processTime;
             this.pid = pid;
-            this.spentTime = 0;
-        }
-
-        public int step(ProcessPool pool) {
-            if (this.timeToLive > pool.getQuantum()) {
-                this.spentTime += pool.getQuantum();
-                this.timeToLive -= pool.getQuantum();
-                return pool.getQuantum();
-            } else if (this.timeToLive == pool.getQuantum()) {
-                this.timeToLive = 0;
-                this.spentTime += pool.getQuantum();
-                pool.getExecutionPool().removeFirst();
-                this.endTime = pool.getTimestamp() + pool.getQuantum();
-                this.executionTime = this.endTime - this.startTime;
-                this.waitTime = this.executionTime - this.spentTime;
-                pool.incrementSum(this.waitTime, this.executionTime);
-                return pool.getQuantum();
-            } else {
-                int ttl = this.timeToLive;
-                this.spentTime += ttl;
-                this.timeToLive = 0;
-                this.endTime = pool.getTimestamp() + ttl;
-                this.executionTime = this.endTime - this.startTime;
-                this.waitTime = this.executionTime - this.spentTime;
-                pool.incrementSum(this.waitTime, this.executionTime);
-                pool.getExecutionPool().removeFirst();
-                return pool.getQuantum() - ttl;
-            }
-        }
-
-        public boolean isDone() {
-            return done;
-        }
-
-        public void setDone(boolean done) {
-            this.done = done;
+            this.ioProbability = ioProbability;
         }
 
         public int getPid() {
             return pid;
         }
 
-        public void setPid(int pid) {
-            this.pid = pid;
-        }
-
         public int getStartTime() {
             return startTime;
-        }
-
-        public void setStartTime(int startTime) {
-            this.startTime = startTime;
-        }
-
-        public int getEndTime() {
-            return endTime;
-        }
-
-        public void setEndTime(int endTime) {
-            this.endTime = endTime;
         }
 
         public int getProcessTime() {
             return processTime;
         }
 
-        public void setProcessTime(int processTime) {
-            this.processTime = processTime;
-        }
-
         public int getTimeToLive() {
             return timeToLive;
         }
 
-        public void setTimeToLive(int timeToLive) {
-            this.timeToLive = timeToLive;
+        public int getCurrentStartTime() {
+            return currentStartTime;
+        }
+
+        public int getIoProbability() {
+            return ioProbability;
         }
 
     }
 
-    public static class ProcessPool {
+    public class ProcessQueue {
 
         private final int quantum;
-        private int waitSum, processSum;
-        private final PriorityQueue<Process> pool;
-        private final Deque<Process> executionPool;
-        private int timestamp;
+        private final Deque<Process> executionQueue;
+        private final int priority;
+        private final ProcessPool caller;
 
-        public void incrementSum(int wait, int proccess) {
-            this.waitSum += wait;
-            this.processSum += proccess;
+        public ProcessQueue(ProcessPool calling, int quantum, int priority) {
+            this.quantum = quantum;
+            this.executionQueue = new LinkedList<>();
+            this.priority = priority;
+            this.caller = calling;
         }
 
-        public int getWaitSum() {
-            return waitSum;
-        }
+        /**
+         * Put the process one queue bellow;
+         */
+        public void demoteProcess(Process p) {
 
-        public int getProcessSum() {
-            return processSum;
-        }
-
-        public int getTimestamp() {
-            return timestamp;
-        }
-
-        public void setTimestamp(int timestamp) {
-            this.timestamp = timestamp;
         }
 
         public int getQuantum() {
             return quantum;
         }
 
-        public PriorityQueue<Process> getPool() {
-            return pool;
-        }
-
-        public Deque<Process> getExecutionPool() {
-            return executionPool;
-        }
-
-        private ProcessPool(int quantum) {
-            this.quantum = quantum;
-            this.pool = new PriorityQueue<>((Process o1, Process o2) -> o1.startTime - o2.startTime);
-            this.executionPool = new ArrayDeque<>();
-            this.waitSum = this.processSum = 0;
-        }
-
-        public void notifyPool() {
-            while (!pool.isEmpty()) {
-                if (pool.peek().getStartTime() <= this.timestamp) {
-                    executionPool.addLast(pool.poll());
-                } else {
-                    break;
-                }
-            }
+        public void step() {
         }
 
         public boolean canStep() {
-            return !(pool.isEmpty() && executionPool.isEmpty());
+            return !executionQueue.isEmpty();
         }
 
-        public void insertProcess(int pid, int startTime, int processTime) {
-            pool.add(new Process(pid, startTime, processTime));
+        public Deque<Process> getExecutionQueue() {
+            return executionQueue;
         }
 
-        public String step() {
-            String process = null;
-            notifyPool();
-            Process current = executionPool.peekFirst();
-            if (current != null) {
-                process = "P" + current.pid;
+    }
 
-                int taken = current.step(this);
-                timestamp += taken;
-                notifyPool();
+    public class WaitingShell {
 
-                if (current.getTimeToLive() > 0) {
-                    executionPool.addLast(executionPool.pollFirst());
-                }
-            } else {
-                timestamp++;
-            }
+        private final Process process;
+        private int queue;
+
+        public WaitingShell(Process process, int queue) {
+            this.process = process;
+            this.queue = queue;
+        }
+
+        public void resetQueue() {
+            this.queue = 0;
+        }
+
+        public Process getProcess() {
             return process;
         }
+
+        public int getQueue() {
+            return queue;
+        }
+
+    }
+
+    public class ProcessPool {
+
+        private final PriorityQueue<WaitingShell> waitQueue;
+        private final ProcessQueue processQueue[];
+        private long timestamp;
+        private final int queuesAmount;
+
+        public ProcessPool(int queues, int[] quantumList) {
+
+            if (quantumList.length < queues) {
+                throw new Error("There ain't quantum numbers enought on list");
+            }
+
+            if (queues < 1) {
+                throw new Error("It even exists? A 0 length queue pool?");
+            }
+
+            Random random = new Random();
+
+            this.processQueue = new ProcessQueue[queues];
+            int queueQuantum[] = new int[queues];
+
+            for (int i = 0; i < queues; i++) {
+                this.processQueue[i] = new ProcessQueue(this, quantumList[i], i);
+            }
+
+            this.waitQueue = new PriorityQueue<>((WaitingShell o1, WaitingShell o2) -> o1.getProcess().currentStartTime - o2.getProcess().currentStartTime);
+            this.timestamp = 0;
+            this.queuesAmount = queues;
+        }
+
+        /**
+         * Reset the priority of the waiting queue processes
+         */
+        public void resetProcessesPriority() {
+            for (WaitingShell shell : waitQueue) {
+                shell.resetQueue();
+            }
+        }
+
+        /**
+         * Recover the processes which currentStartTime is less or equals than
+         * the current timestamp
+         *
+         */
+        public void recoverWaiting() {
+            WaitingShell current;
+            while (!waitQueue.isEmpty()) {
+                current = waitQueue.peek();
+                if (current.getProcess().getCurrentStartTime() <= this.timestamp) {
+                    processQueue[current.getQueue()].getExecutionQueue().addLast(current.getProcess());
+                    waitQueue.remove();
+                } else {
+                    return;
+                }
+            }
+        }
+
+        public void insertProcess(int pid, int startTime, int processTime, int ioProbability) {
+            waitQueue.add(new WaitingShell(new Process(pid, startTime, processTime, ioProbability), 0));
+        }
+
+        public void runMLFQ() {
+
+        }
+
+        public ProcessQueue[] getProcessQueue() {
+            return processQueue;
+        }
+
+        public PriorityQueue<WaitingShell> getWaitQueue() {
+            return waitQueue;
+        }
+
+        public long getTimestamp() {
+            return timestamp;
+        }
+
+        public int getQueuesAmount() {
+            return queuesAmount;
+        }
+
     }
 }
