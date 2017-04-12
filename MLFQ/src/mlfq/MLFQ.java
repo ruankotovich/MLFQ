@@ -178,11 +178,13 @@ class ProcessQueue {
      *
      * @param p - process that will be demoted
      */
-    public void demoteProcess(Process p) {
+    public void demoteProcess(Process p, boolean addQueue) {
         ProcessQueue queue = caller.getProcessQueues()[priority < (caller.getQueuesAmount() - 1) ? priority + 1 : priority];
         p.changeCurrentQueue(queue.getPriority());
         p.changeTTL(queue.getQuantum());
-        queue.getExecutionQueue().addLast(p);
+        if (addQueue) {
+            queue.getExecutionQueue().addLast(p);
+        }
     }
 
     /**
@@ -230,35 +232,6 @@ class ProcessQueue {
         }
 
         if (sliced) {
-//            if (step == Process.PROCESS_UNFINISHED) {
-//                executing = executionQueue.pollFirst();
-//                MLFQ.printLog(", executing process til the end.\n");
-//                //execute to the end if unfinished
-//                if (step < Process.PROCESS_FINISHED) {
-//                    while ((step = executing.step(caller)) < Process.PROCESS_FINISHED) {
-//                        caller.increaseTimestamp();
-//                        caller.decreaseSliceTime();
-//                        MLFQ.printStepType(step);
-//                    }
-//                    caller.increaseTimestamp();
-//                    caller.decreaseSliceTime();
-//                    MLFQ.printStepType(step);
-//                }
-//
-//                switch (step) {
-//                    case Process.PROCESS_FINISHED:
-//                        caller.getFinishedProcesses().put(executing.getPid(), executing);
-//                        break;
-//                    case Process.PROCESS_BLOCKED:
-//                        executing.changeTTL(caller.getProcessQueues()[executing.getCurrentQueue()].quantum);
-//                        caller.getWaitQueue().add(executing);
-//                        break;
-//                    default:
-//                        break;
-//                }
-//            } else {
-//                MLFQ.printLog(", but the process has already finished/blocked/overquoted.\n");
-//            }
 
             if (step != Process.PROCESS_BLOCKED && step != Process.PROCESS_FINISHED && step != Process.PROCESS_BLOCKED_N_QUANTUM_OVER) {
                 executing = executionQueue.pollFirst();
@@ -279,7 +252,8 @@ class ProcessQueue {
             if (step != Process.PROCESS_BLOCKED_N_QUANTUM_OVER) {
                 executing = executionQueue.pollFirst();
             }
-            demoteProcess(executing);
+            demoteProcess(executing, step != Process.PROCESS_BLOCKED_N_QUANTUM_OVER);
+
         }
 
         MLFQ.printLog("\nQueues : ");
@@ -289,6 +263,7 @@ class ProcessQueue {
                 MLFQ.printLog("[" + p.getPid() + "(" + p.getLifeTime() + ", " + p.getProcessTime() + ")" + "] ");
             }
         }
+
         MLFQ.printLog("\n");
 
     }
@@ -502,28 +477,28 @@ public class MLFQ {
 
     @Deprecated
     public static void printLog(String toLog) {
-        //System.out.print(toLog);
+        System.out.print(toLog);
     }
 
     @Deprecated
     public static void printStepType(char step) {
-//        switch (step) {
-//            case 0:
-//                System.out.print(" - UNFINISHED\n");
-//                break;
-//            case 1:
-//                System.out.print(" - FINISHED\n");
-//                break;
-//            case 2:
-//                System.out.print(" - QUANTUM ENDED\n");
-//                break;
-//            case 3:
-//                System.out.print(" - BLOCKED\n");
-//                break;
-//            case 4:
-//                System.out.print(" - BLOCKED AND QUANTUM ENDED\n");
-//                break;
-//        }
+        switch (step) {
+            case 0:
+                System.out.print(" - UNFINISHED\n");
+                break;
+            case 1:
+                System.out.print(" - FINISHED\n");
+                break;
+            case 2:
+                System.out.print(" - QUANTUM ENDED\n");
+                break;
+            case 3:
+                System.out.print(" - BLOCKED\n");
+                break;
+            case 4:
+                System.out.print(" - BLOCKED AND QUANTUM ENDED\n");
+                break;
+        }
     }
 
     public static void main(String[] args) {
@@ -570,10 +545,10 @@ public class MLFQ {
                 waitSum += key.getValue().getWaitTime();
                 executionSum += key.getValue().getExecutionTime();
             }
-            System.out.println(queues + "," + minimal + "," + increment + "," + refresh + "," + executionSum / processPool.getFinishedProcesses().size() + "," + waitSum / processPool.getFinishedProcesses().size());
-//            System.out.println("Tempo médio de execução: " + executionSum / processPool.getFinishedProcesses().size());
-//            System.out.println("Tempo médio de espera: " + waitSum / processPool.getFinishedProcesses().size());
-//            System.out.println(processPool.getProcessOrder());
+//            System.out.println(queues + "," + minimal + "," + increment + "," + refresh + "," + executionSum / processPool.getFinishedProcesses().size() + "," + waitSum / processPool.getFinishedProcesses().size());
+            System.out.println("Tempo médio de execução: " + executionSum / processPool.getFinishedProcesses().size());
+            System.out.println("Tempo médio de espera: " + waitSum / processPool.getFinishedProcesses().size());
+            System.out.println(processPool.getProcessOrder());
             processCount = scanner.nextInt();
         }
     }
